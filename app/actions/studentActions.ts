@@ -1,71 +1,118 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
 import { Student } from '@prisma/client';
 
-export type ActionState = {
-  success: boolean;
-  message: string;
-};
 
-// CREATE
-export async function createStudent(
-  prevState: ActionState,
-  formData: FormData
-): Promise<ActionState> {
+type GetStudentsResult =
+  | { success: true; data: Student[] }
+  | { success: false; message: string };
+
+export async function getStudents(): Promise<GetStudentsResult> {
+  try {
+    const students = await prisma.student.findMany();
+    return { success: true, data: students };
+  } catch (error) {
+    console.error('เกิดข้อผิดพลาด:', error);
+    return { success: false, message: 'เกิดข้อผิดพลาดขณะดึงข้อมูล' };
+  }
+}
+
+
+export async function createStudent(formData: FormData) {
+  const firstName = formData.get('firstName') as string;
+  const lastName = formData.get('lastName') as string;
+  const major = formData.get('major') as string;
+  const faculty = formData.get('faculty') as string;
+  const email = formData.get('email') as string;
+  const phone = formData.get('phone') as string;
+
+  // 🔍 Validation แบบพื้นฐาน
+  if (!firstName || !lastName || !major || !faculty || !email || !phone) {
+    return { success: false, message: 'ข้อมูลไม่ถูกต้อง' };
+  }
+
   try {
     await prisma.student.create({
       data: {
-        firstName: formData.get('firstName') as string,
-        lastName: formData.get('lastName') as string,
-        major: formData.get('major') as string,
-        faculty: formData.get('faculty') as string,
-        email: formData.get('email') as string,
-        phone: formData.get('phone') as string,
+        firstName,
+        lastName,
+        major,
+        faculty,
+        email,
+        phone,
       },
     });
-    return { success: true, message: 'เพิ่มข้อมูลนักเรียนสำเร็จ' };
+
+    revalidatePath('/students'); // หรือหน้าแสดงผลอื่น
+    return { success: true, message: 'เพิ่มนักเรียนเรียบร้อยแล้ว' };
   } catch (error: any) {
-    return { success: false, message: 'เกิดข้อผิดพลาด: ' + error.message };
+    if (error.code === 'P2002') {
+      // Prisma error: unique constraint failed
+      return { success: false, message: 'อีเมลนี้ถูกใช้ไปแล้ว' };
+    }
+
+    console.error('เกิดข้อผิดพลาด:', error);
+    return { success: false, message: 'เกิดข้อผิดพลาดขณะบันทึกข้อมูล' };
   }
 }
 
-// ✅ READ (อย่าลืม export ตรงนี้)
-export async function getStudents(): Promise<Student[]> {
-  return prisma.student.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
-}
+export async function editStudent(studentId: string, formData: FormData) {
+  const firstName = formData.get('firstName') as string;
+  const lastName = formData.get('lastName') as string;
+  const major = formData.get('major') as string;
+  const faculty = formData.get('faculty') as string;
+  const email = formData.get('email') as string;
+  const phone = formData.get('phone') as string;
 
-// UPDATE
-export async function updateStudent(
-  id: number,
-  formData: FormData
-): Promise<ActionState> {
+  if (!firstName || !lastName || !major || !faculty || !email || !phone) {
+    return { success: false, message: 'ข้อมูลไม่ถูกต้อง' };
+  }
+
   try {
     await prisma.student.update({
-      where: { id },
+      where: { id: Number(studentId) },
       data: {
-        firstName: formData.get('firstName') as string,
-        lastName: formData.get('lastName') as string,
-        major: formData.get('major') as string,
-        faculty: formData.get('faculty') as string,
-        email: formData.get('email') as string,
-        phone: formData.get('phone') as string,
+        firstName,
+        lastName,
+        major,
+        faculty,
+        email,
+        phone,
       },
     });
-    return { success: true, message: 'แก้ไขข้อมูลสำเร็จ' };
+
+    revalidatePath('/students'); // รีเฟรชหน้ารายการนักเรียน
+    return { success: true, message: 'แก้ไขนักเรียนเรียบร้อยแล้ว' };
   } catch (error: any) {
-    return { success: false, message: 'เกิดข้อผิดพลาด: ' + error.message };
+    if (error.code === 'P2002') {
+      return { success: false, message: 'อีเมลนี้ถูกใช้ไปแล้ว' };
+    }
+
+    console.error('เกิดข้อผิดพลาดขณะแก้ไข:', error);
+    return { success: false, message: 'เกิดข้อผิดพลาดขณะแก้ไขข้อมูล' };
   }
 }
 
-// DELETE
-export async function deleteStudent(id: number): Promise<ActionState> {
+export async function getStudentById(id: number) {
   try {
-    await prisma.student.delete({ where: { id } });
-    return { success: true, message: 'ลบข้อมูลสำเร็จ' };
-  } catch (error: any) {
-    return { success: false, message: 'เกิดข้อผิดพลาด: ' + error.message };
+    const student = await prisma.student.findUnique({ where: { id } });
+    if (!student) return { success: false, message: 'ไม่พบข้อมูลนักเรียน' };
+    return { success: true, data: student };
+  } catch (error) {
+    console.error(error);
+    return { success: false, message: 'เกิดข้อผิดพลาดขณะดึงข้อมูล' };
+  }
+}
+
+export async function deleteStudent(studentId: string) {
+  try {
+    await prisma.student.delete({ where: { id: Number(studentId) } });
+    revalidatePath('/students');
+    return { success: true, message: 'ลบนักเรียนเรียบร้อยแล้ว' };
+  } catch (error) {
+    console.error('เกิดข้อผิดพลาดขณะลบ:', error);
+    return { success: false, message: 'เกิดข้อผิดพลาดขณะลบข้อมูล' };
   }
 }
